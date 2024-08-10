@@ -26,8 +26,8 @@ This project demonstrates how to use Mutual TLS (mTLS) authentication in a Golan
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/your-username/gin-kubernetes-mtls.git
-    cd gin-kubernetes-mtls
+    git clone https://github.com/BiodigitalJaz/web-kubeauth.git
+    cd web-kubeauth
     ```
 
 2. Install dependencies:
