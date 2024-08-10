@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Select Kubeconfig Context</title>
+</head>
+<body>
+    <h2>Select Kubeconfig Context</h2>
+    <form action="/select-context" method="post">
+        <label for="context">Available Contexts:</label>
+        <select id="context" name="context">
+            {{range .Contexts}}
+            <option value="{{.Name}}">{{.Name}}</option>
+            {{end}}
+        </select>
+        <button type="submit">Submit</button>
+    </form>
+</body>
+</html>
