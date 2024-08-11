@@ -50,6 +50,8 @@ This project demonstrates how to use Mutual TLS (mTLS) authentication in a Golan
 
 3. After selecting a context and successfully authenticating, you will be redirected to the protected home page. If authentication fails, an error message will be displayed.
 
+4. Leveraging Kubernetes RBAC, we are granting access to the authenticated page if you are associated with the required ClusterRoleBinding. This is set as an environment variable `os.Getenv("ACCESS_ROLE")`. As an example, we are listing out the assiciated clusterrolebindings and rolebindings on the authenticated home page.
+
 ### Project Structure
 
 - `cmd/main.go`: The main application file that handles routing, authentication, and session management.

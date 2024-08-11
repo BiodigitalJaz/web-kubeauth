@@ -6,6 +6,43 @@
     <title>Home</title>
 </head>
 <body>
-    <h2>{{.Message}}</h2>
+    <h1>Welcome to the Kubernetes Dashboard</h1>
+    <p>You are successfully authenticated.</p>
+
+    <h2>ClusterRoleBindings</h2>
+    <ul>
+        {{range .ClusterRoleBindings}}
+        <li>
+            <strong>{{.ObjectMeta.Name}}</strong><br>
+            Role: {{.RoleRef.Name}}<br>
+            Kind: {{.RoleRef.Kind}}<br>
+            API Group: {{.RoleRef.APIGroup}}<br>
+            Subjects:
+            <ul>
+                {{range .Subjects}}
+                <li>{{.Kind}}: {{.Name}} (Namespace: {{.Namespace}})</li>
+                {{end}}
+            </ul>
+        </li>
+        {{end}}
+    </ul>
+
+    <h2>RoleBindings</h2>
+    <ul>
+        {{range .RoleBindings}}
+        <li>
+            <strong>{{.ObjectMeta.Namespace}}/{{.ObjectMeta.Name}}</strong><br>
+            Role: {{.RoleRef.Name}}<br>
+            Kind: {{.RoleRef.Kind}}<br>
+            API Group: {{.RoleRef.APIGroup}}<br>
+            Subjects:
+            <ul>
+                {{range .Subjects}}
+                <li>{{.Kind}}: {{.Name}} (Namespace: {{.Namespace}})</li>
+                {{end}}
+            </ul>
+        </li>
+        {{end}}
+    </ul>
 </body>
 </html>

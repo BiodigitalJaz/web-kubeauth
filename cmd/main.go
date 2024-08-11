@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/base64"
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +12,9 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type KubeConfig struct {
@@ -43,7 +44,7 @@ type KubeConfig struct {
 func main() {
 	router := gin.Default()
 
-	// Set up session store (using cookies here for simplicity)
+	// Set up session store using cookies
 	store := cookie.NewStore([]byte("secret"))
 	router.Use(sessions.Sessions("mysession", store))
 
@@ -93,90 +94,28 @@ func main() {
 			return
 		}
 
-		// Find the selected context
-		var selectedUser, selectedCluster string
+		// Find the selected context details
+		var selectedCluster, selectedUser string
 		for _, ctx := range kubeConfig.Contexts {
 			if ctx.Name == selectedContext {
-				selectedUser = ctx.Context.User
 				selectedCluster = ctx.Context.Cluster
+				selectedUser = ctx.Context.User
 				break
 			}
 		}
 
-		// Extract the relevant user and cluster details
-		var clientCert, clientKey, caCert []byte
-		var clusterServer string
-		for _, user := range kubeConfig.Users {
-			if user.Name == selectedUser {
-				clientCert, _ = base64.StdEncoding.DecodeString(user.User.ClientCertificateData)
-				clientKey, _ = base64.StdEncoding.DecodeString(user.User.ClientKeyData)
-				break
-			}
-		}
-		for _, cluster := range kubeConfig.Clusters {
-			if cluster.Name == selectedCluster {
-				caCert, _ = base64.StdEncoding.DecodeString(cluster.Cluster.CertificateAuthorityData)
-				clusterServer = cluster.Cluster.Server
-				break
-			}
-		}
-
-		// Load the client certificate and key
-		clientCertPair, err := tls.X509KeyPair(clientCert, clientKey)
-		if err != nil {
-			c.String(http.StatusInternalServerError, "Failed to load client key pair: %v", err)
-			return
-		}
-
-		// Clear sensitive data from memory
-		for i := range clientCert {
-			clientCert[i] = 0
-		}
-		for i := range clientKey {
-			clientKey[i] = 0
-		}
-		clientCert = nil
-		clientKey = nil
-
-		// Create a CA certificate pool and add the CA cert to it
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			c.String(http.StatusInternalServerError, "Failed to append CA certificate to pool")
-			return
-		}
-
-		// Clear CA certificate data from memory
-		for i := range caCert {
-			caCert[i] = 0
-		}
-		caCert = nil
-
-		// Create a TLS configuration
-		tlsConfig := &tls.Config{
-			Certificates: []tls.Certificate{clientCertPair},
-			RootCAs:      caCertPool, // Use the CA cert pool to validate the server's certificate
-			ClientCAs:    caCertPool,
-			ClientAuth:   tls.RequireAndVerifyClientCert, // This ensures client certificate validation
-		}
-
-		// Create a new HTTPS client using the provided certificates
-		client := &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: tlsConfig,
-			},
-		}
-
-		// Use the selected context's cluster server for testing the connection
-		resp, err := client.Get(clusterServer)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			c.String(http.StatusUnauthorized, "Authentication failed: %v", err)
-			return
-		}
-
-		// If authentication is successful, set a session variable and redirect to the protected home page
+		// Store only minimal information in the session
 		session := sessions.Default(c)
 		session.Set("authenticated", true)
-		session.Save()
+		session.Set("user", selectedUser)
+		session.Set("cluster", selectedCluster)
+
+		err := session.Save()
+		if err != nil {
+			log.Printf("Failed to save session: %v\n", err)
+			c.String(http.StatusInternalServerError, "Failed to save session")
+			return
+		}
 
 		c.Redirect(http.StatusFound, "/home")
 	})
@@ -191,8 +130,72 @@ func main() {
 			return
 		}
 
+		// Retrieve minimal data from session
+		selectedUser := session.Get("user").(string)
+
+		// Use the client to create a Kubernetes clientset
+		clientConfig, err := clientcmd.NewClientConfigFromBytes(kubeConfigBytes)
+		if err != nil {
+			log.Printf("Failed to create Kubernetes client config: %v\n", err)
+			c.String(http.StatusInternalServerError, "Failed to create Kubernetes client config")
+			return
+		}
+
+		restConfig, err := clientConfig.ClientConfig()
+		if err != nil {
+			log.Printf("Failed to create Kubernetes REST config: %v\n", err)
+			c.String(http.StatusInternalServerError, "Failed to create Kubernetes REST config")
+			return
+		}
+
+		clientset, err := kubernetes.NewForConfig(restConfig)
+		if err != nil {
+			log.Printf("Failed to create Kubernetes clientset: %v\n", err)
+			c.String(http.StatusInternalServerError, "Failed to create Kubernetes clientset")
+			return
+		}
+
+		// Query for the user's ClusterRoleBindings
+		crbs, err := clientset.RbacV1().ClusterRoleBindings().List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list ClusterRoleBindings: %v\n", err)
+			c.String(http.StatusInternalServerError, "Failed to list ClusterRoleBindings")
+			return
+		}
+
+		// Check if user is part of the required ClusterRoleBinding
+		requiredRoleBinding := os.Getenv("ACCESS_ROLE") // Replace with the required ClusterRoleBinding name
+		userAuthorized := false
+
+		for _, crb := range crbs.Items {
+			for _, subject := range crb.Subjects {
+				if subject.Kind == "User" && subject.Name == selectedUser && crb.RoleRef.Name == requiredRoleBinding {
+					userAuthorized = true
+					break
+				}
+			}
+			if userAuthorized {
+				break
+			}
+		}
+
+		if !userAuthorized {
+			c.String(http.StatusForbidden, "Access denied: You are not authorized to view this page.")
+			return
+		}
+
+		// Query for RoleBindings (optional, depending on your use case)
+		rbs, err := clientset.RbacV1().RoleBindings("").List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("Failed to list RoleBindings: %v\n", err)
+			c.String(http.StatusInternalServerError, "Failed to list RoleBindings")
+			return
+		}
+
+		// Display the home page
 		c.HTML(http.StatusOK, "home.html", gin.H{
-			"Message": "Welcome to the protected home page!",
+			"ClusterRoleBindings": crbs.Items,
+			"RoleBindings":        rbs.Items,
 		})
 	})
 
